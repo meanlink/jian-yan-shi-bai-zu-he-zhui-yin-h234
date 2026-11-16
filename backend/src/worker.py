@@ -8,6 +8,7 @@ from src.models import Job, Dataset, Report
 from src.services.business import analyze
 from src.services.reports import deliver
 from src.services.audit import record
+from src.sequential_worker import tick as sequential_tick
 logging.basicConfig(level=logging.INFO)
 def execute(job_id):
     with Session() as db:
@@ -29,6 +30,7 @@ def tick():
     with Session() as db:
         queued=list(db.scalars(select(Job.id).where(Job.status=='queued').limit(3)))
     for job_id in queued:execute(job_id)
+    sequential_tick()
     with Session() as db:
         for r in db.scalars(select(Report).where(Report.enabled==True,Report.next_run<=time.time())):
             d=deliver(db,r)
@@ -41,6 +43,7 @@ def main():
         for j in db.scalars(select(Job).where(Job.status=='running')):
             j.status='queued';record(db,'worker','job.recovered',{'id':j.id})
         db.commit()
+    sequential_tick()
     while True:
         Path('/tmp/heartbeat').touch()
         try:

@@ -6,6 +6,18 @@
 数据接入（JSON/CSV、字段验证、批次指纹）→ 参数化分析（异步 Python worker）→ 结果复核（指标、图形、明细、解释、批准）→ 定时分发（本地收件箱、CSV/JSON、SHA256）；另有业务总览和审计轨迹。
 三个贯穿全栈的实体：Dataset 数据批次、Job 分析任务、Report 分发计划；辅助 User、Audit、Delivery。
 
+## 预登记连续检验（随时可停仍有效的证据）
+一次性快照容易把波动当发现。新增的连续检验层要求开检前锁定共败假设、前项/后项、纳入规则、p0/p1、误报上限 α，登记保存即不可修改（只能另建新登记），并记录登记指纹。
+
+- 单位：每批"前项全部失败"的事务。单位中后项全部失败计 1，否则计 0。
+- 证据：逐批累积似然比 E=Π[p1^X(1-p1)^(1-X)]/[p0^X(1-p0)^(1-X)]。H0 下 E 为非负鞅，Ville 不等式保证任意观察时点按 E≥1/α 停止的误报概率不超过 α，因此可随时停止而结论仍有效。
+- 停止：达到停止线且满足预登记最少单位数时，worker 冻结停止点样本、E、α、停止批次序号、结论与 SHA256 原件；停止点只累计到首次越过停止线的那一批。
+- 更正：同批补报/撤回会先让旧版本失效，再从该批序号重建后续证据；账本保留每批版本留痕，撤回的旧版仍可备查。
+- 并发与恢复：收数、更正、重算都推进账本版本并生成带版本的评估任务；只处理同版账本，旧计算晚到标记 stale。停止后的新收数与更正只进入"待复核"并写明原因，不改写停止原件。
+- 幂等：每次收数/更正必须带 8~120 字符的 request_key；网络重试复用同一键不会重复纳入。
+
+接口：`GET /sequential/registry`、`POST /sequential`、`GET /sequential/{id}`、`POST /sequential/{id}/batches`、`POST /sequential/{id}/corrections`、`POST /sequential/{id}/reevaluate`、`POST /sequential/{id}/close`（负责人）、`GET /sequential/{id}/stop`。页面从侧栏"连续检验"进入，可登记、收数、更正、查看逐批证据/停止时点/复核原因。评估由现有 worker 一并处理（Redis 通知 + SQL 轮询兜底）。
+
 ## 快速启动
 ```bash
 cp .env.example .env
@@ -37,7 +49,7 @@ COMPOSE_PROJECT_NAME=assay-rules；FRONTEND_PORT=18211；BACKEND_PORT=19211；DB
 错误响应、请求编号、Redis 每 IP 每分钟 240 次限流、JWT 和数据库操作审计。演示密钥与密码仅供本机模拟；生产部署前配置独立密钥与账号。
 
 ## 数据与验收
-所有数据为固定随机种子生成的模拟业务数据，不能作为实际生产决策证据。项目独立算法、输入边界及业务局限详见 BUSINESS.md。测试与截图统一存放 ../../test-artifacts/gb-1012/，源码不含日志/截图/测试报告。
+所有数据为固定随机种子生成的模拟业务数据，不能作为实际生产决策证据。项目独立算法、输入边界及业务局限详见 BUSINESS.md。测试与截图统一存放 ../../test-artifacts/gb-1012/，源码不含日志/截图/测试报告。连续检验的独立单元测试：`test-artifacts/gb-1012/tests/test_sequential.py`（在 backend/ 下运行 `python -m pytest ../../test-artifacts/gb-1012/tests/test_sequential.py`）。
 清理本项目演示数据：`docker compose down -v --remove-orphans`（会删除本项目命名卷）。
 
 ## License
